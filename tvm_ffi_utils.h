@@ -4,10 +4,6 @@
 #include <tvm/ffi/error.h>
 #include <tvm/ffi/extra/c_env_api.h>
 
-#include "cuda_bf16.h"
-#include "cuda_fp16.h"
-#include "driver_types.h"
-
 inline constexpr int64_t encode_dlpack_dtype(DLDataType dtype) {
     return (dtype.code << 16) | (dtype.bits << 8) | dtype.lanes;
 }
@@ -68,3 +64,49 @@ constexpr int64_t bfloat16_code = encode_dlpack_dtype(dl_bfloat16);
     do {                                                                                   \
         TVM_FFI_ICHECK(err == cudaSuccess) << "CUDA Failure: " << cudaGetErrorString(err); \
     } while (0)
+
+#define _TVM_FFI_UTILS_INLINE __attribute__((host)) __attribute__((device)) __inline__ __attribute__((always_inline))
+
+// ATen implement math op with {float, double, int, int64_t}
+// clang-format off
+#define _TVM_FFI_UTILS_ARITHMETIC_WITH_(dtype, other) \
+    _TVM_FFI_UTILS_INLINE dtype operator+(const dtype &lh, const other &rh) { return lh + dtype(rh); }  \
+    _TVM_FFI_UTILS_INLINE dtype operator-(const dtype &lh, const other &rh) { return lh - dtype(rh); }  \
+    _TVM_FFI_UTILS_INLINE dtype operator*(const dtype &lh, const other &rh) { return lh * dtype(rh); }  \
+    _TVM_FFI_UTILS_INLINE dtype operator/(const dtype &lh, const other &rh) { return lh / dtype(rh); }  \
+    _TVM_FFI_UTILS_INLINE dtype operator+(const other &lh, const dtype &rh) { return dtype(lh) + rh; }  \
+    _TVM_FFI_UTILS_INLINE dtype operator-(const other &lh, const dtype &rh) { return dtype(lh) - rh; }  \
+    _TVM_FFI_UTILS_INLINE dtype operator*(const other &lh, const dtype &rh) { return dtype(lh) * rh; }  \
+    _TVM_FFI_UTILS_INLINE dtype operator/(const other &lh, const dtype &rh) { return dtype(lh) / rh; }
+// clang-format on
+
+// clang-format off
+#define _TVM_FFI_UTILS_COMPARE_WITH_(dtype, other) \
+    _TVM_FFI_UTILS_INLINE bool operator<=(const dtype &lh, const other &rh) { return lh <= dtype(rh); } \
+    _TVM_FFI_UTILS_INLINE bool operator<(const dtype &lh, const other &rh) { return lh < dtype(rh); }   \
+    _TVM_FFI_UTILS_INLINE bool operator>=(const dtype &lh, const other &rh) { return lh >= dtype(rh); } \
+    _TVM_FFI_UTILS_INLINE bool operator>(const dtype &lh, const other &rh) { return lh > dtype(rh); }
+// clang-format on
+
+#define _TVM_FFI_UTILS_HABS(dtype)             \
+    _TVM_FFI_UTILS_INLINE dtype abs(dtype v) { \
+        return __habs(v);                      \
+    }
+
+// ATen
+// 1. rely on implicitly conversion to float for comparisons
+//   c10::{Float8_e4m3fn,Float8_e4m3fnuz,Float8_e5m2,Float8_e5m2fnuz,Float8_e8m0fnu,Half}
+// 2. impl operator{<,>} for c10::BFloat16
+// Ref: https://github.com/pytorch/pytorch/commit/5e2ef2a465f79957faf5c56fe2a66d7a9b18e1a2
+// For nv types, we'll met conflict between `arithmetic >= arithmetic` and `nv_half >= nv_half`
+// TODO: ATen implement conversions with {float, double, int, int64_t}
+
+#define _TVM_FFI_UTILS_NV_HALF                      \
+    _TVM_FFI_UTILS_ARITHMETIC_WITH_(nv_half, float) \
+    _TVM_FFI_UTILS_COMPARE_WITH_(nv_half, float)    \
+    _TVM_FFI_UTILS_HABS(nv_half)
+
+#define _TVM_FFI_UTILS_NV_BFLOAT16                      \
+    _TVM_FFI_UTILS_ARITHMETIC_WITH_(nv_bfloat16, float) \
+    _TVM_FFI_UTILS_COMPARE_WITH_(nv_bfloat16, float)    \
+    _TVM_FFI_UTILS_HABS(nv_bfloat16)
